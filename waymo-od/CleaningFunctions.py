@@ -1,6 +1,4 @@
 import os
-import tensorflow as tf
-tf.enable_eager_execution()
 import pandas as pd
 import math
 import numpy as np
@@ -8,6 +6,7 @@ import itertools
 import collections
 import re
 from datetime import datetime
+
 
 def scan(folder):   #get all file names      
     x=[]
@@ -30,18 +29,25 @@ def converttime(t):
     return t
 
 
-def Ped2df(SegID, tstamp, pedLoc,
+def Ped2df(SegID, tstamp, VehCount,
+           PedCount,BikeCount, pedLoc,
            pedMeta, VehPos, tday, w):
     length = len(pedLoc)
-    t, px, py, pz, \
+    t,vCount,pCount,bCount, \
+    px, py, pz, \
     px_GF, py_GF, pz_GF, \
     vx_GF, vy_GF, vz_GF, \
     pw, pl, pht, \
     phd, psx, psy, \
-    paccx, paccy = ([] for i in range(18))
+    paccx, paccy = ([] for i in range(21))
 
     for i in range(length):
         t.append(tstamp[i])
+        
+        vCount.append(VehCount[i])
+        pCount.append(PedCount[i])
+        bCount.append(BikeCount[i])
+        
         pw.append(pedLoc[i].width)
         pl.append(pedLoc[i].length)
         pht.append(pedLoc[i].height)
@@ -73,19 +79,18 @@ def Ped2df(SegID, tstamp, pedLoc,
                      px_GF, py_GF, pz_GF,
                      vx_GF, vy_GF, vz_GF,
                      pw, pl, pht, phd,
-                     psx, psy, paccx, paccy]).T.tolist()
+                     psx, psy, paccx,
+                     paccy,vCount,pCount,
+                     bCount]).T.tolist()
 
     columnsnames = ['Timestamp', 'x', 'y', 'z',
                     'x_GF', 'y_GF', 'pz_GF',
                     'x_GF', 'y_GF', 'z_GF',
-                    'Width', 'Length', 'Height', 'Heading',
-                    'Speed x', 'Speed y', 'accel x', 'accel y']
+                    'Width', 'Length', 'Height',
+                    'Heading','Speed x', 'Speed y',
+                    'accel x', 'accel y','Veh Count','Ped Count','Bike Count']
     pedDF = pd.DataFrame(data, columns=columnsnames)
 
-    # transform = pedDF['vpose'].apply(pd.Series)
-    # transform = transform.rename(columns= lambda x: 'AVtransform_' +str(x))
-    # pedDF = pedDF.drop(columns= 'vpose')
-    # pedDF = pd.concat([pedDF[:],transform[:]],axis=1)
 
     pedDF['Weather'] = w
     pedDF['Time of Day'] = tday
@@ -93,26 +98,56 @@ def Ped2df(SegID, tstamp, pedLoc,
     return pedDF
 
 
-def PedExtract(SegID,Frames):
+def PedExtract(SegID,Frames,ObjectType):   #ObjectType: to be analysed, unknown:0, veh:1, ped:2, sign:3, bike:4 
     pedLoc = collections.defaultdict(list)  # pedestrians label box
     pedMeta = collections.defaultdict(list)  # pedestrians label metadata
     VehPos = collections.defaultdict(list)  # SDC transformation matrix
     tstamp = collections.defaultdict(list)
+    VehCount = collections.defaultdict(list)
+    PedCount = collections.defaultdict(list)
+    BikeCount = collections.defaultdict(list)
     tday = Frames[SegID][0].context.stats.time_of_day
     w = Frames[SegID][0].context.stats.weather
 
     for j in range(len(Frames[SegID])):
         t = Frames[SegID][j].timestamp_micros  # timestamp
+        # number of each object type in scene (ped,veh,bke)
+        obj = Frames[SegID][j].context.stats.laser_object_counts
+        if len(obj)>0:
+            fun = lambda x: (x.type, x.count)
+            objlist = list(map(fun,obj))
+            objdict = dict((objlist[i][0],objlist[i][1]) for i in range(len(objlist)))
+            objkeys = list(objdict.keys())
+
+            if 1 in objkeys:
+                vcount = objdict[1]
+            else: vcount = 0
+
+            if 2 in objkeys:
+                pcount = objdict[2]
+            else: pcount = 0
+
+            if 4 in objkeys:
+                bcount = objdict[4]
+            else: bcount = 0
+        else:
+            vcount= pcount= bcount = 0
+
         vpos = Frames[SegID][j].pose
         Nlabels = CountLLabels(Frames[SegID][j])  # number of laser labels
 
         for k in range(Nlabels):
             LidarLab = Frames[SegID][j].laser_labels[k]
-            if LidarLab.type == 2:  # type 2: pedestrian
+            if LidarLab.type == ObjectType:  # type 2: pedestrian
 
                 PedID = LidarLab.id
 
                 tstamp[PedID].append(t)
+                
+                VehCount[PedID].append(vcount)
+                PedCount[PedID].append(pcount)
+                BikeCount[PedID].append(bcount)
+                
                 pedLoc[PedID].append(LidarLab.box)
 
                 pedMeta[PedID].append(LidarLab.metadata)
@@ -121,14 +156,15 @@ def PedExtract(SegID,Frames):
 
     Ped = {}
     for p in list(pedLoc.keys()):
-        Ped[p] = Ped2df(SegID, tstamp[p], pedLoc[p],
-                        pedMeta[p], VehPos[p], tday, w)
+        Ped[p] = Ped2df(SegID, tstamp[p],
+                        VehCount[p], PedCount[p],BikeCount[p],
+                        pedLoc[p], pedMeta[p], VehPos[p], tday, w)
 
     return Ped
 
-def MultiFrame(Frames):
+def MultiFrame(Frames,ObjectType):
     PedTraj = {}
     for i in range(len(Frames)):
         SegID = list(Frames.keys())[i]
-        PedTraj.update(PedExtract(SegID,Frames))
+        PedTraj.update(PedExtract(SegID,Frames,ObjectType))
     return PedTraj
