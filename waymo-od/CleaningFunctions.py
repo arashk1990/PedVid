@@ -8,11 +8,11 @@ import re
 from datetime import datetime
 
 
-def scan(folder):   #get all file names      
+def scan(folder,keyword):   #get all file names      
     x=[]
     for path,dirs,files in os.walk(folder):
         for f in files:
-            if f.startswith('segment'):
+            if f.startswith(keyword):
                 x.append(os.path.join(path,f))
     return(x)
 
@@ -84,8 +84,8 @@ def Ped2df(SegID, tstamp, VehCount,
                      bCount]).T.tolist()
 
     columnsnames = ['Timestamp', 'x', 'y', 'z',
-                    'x_GF', 'y_GF', 'pz_GF',
-                    'x_GF', 'y_GF', 'z_GF',
+                    'px_GF', 'py_GF', 'pz_GF',
+                    'x_GF_SDC', 'y_GF_SDC', 'z_GF_SDC',
                     'Width', 'Length', 'Height',
                     'Heading','Speed x', 'Speed y',
                     'accel x', 'accel y','Veh Count','Ped Count','Bike Count']
